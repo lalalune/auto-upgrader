@@ -393,6 +393,7 @@ The goal is a fully migrated, tested, and working 1.x plugin.
       await execa('claude', [
         '--print',
         '--max-turns', '30',
+        '--model', 'opus',
         '--dangerously-skip-permissions',
         migrationPrompt
       ], {
