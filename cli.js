@@ -367,11 +367,38 @@ The goal is a fully migrated, tested, and working 1.x plugin.
         '--dangerously-skip-permissions',
         migrationPrompt
       ], { stdio: 'inherit', cwd: this.repoPath });
-      // console.log(chalk.yellow('\n📋 Running tests to verify migration...'));
+      
+      const spinner = ora('Preparing to run tests...').start();
       try {
-        await execa('npm', ['test'], { stdio: 'inherit', cwd: this.repoPath });
-        // console.log(chalk.green('✅ All tests passing!'));
+        // Ensure dependencies are installed
+        spinner.text = 'Running npm install to ensure all dependencies are present...';
+        await execa('npm', ['install'], { cwd: this.repoPath });
+        spinner.succeed('npm install complete.');
+
+        // Check if vitest is installed, if not, install it
+        let vitestInstalled = false;
+        try {
+          // Check if vitest is runnable via npx (which checks local and global)
+          await execa('npx', ['vitest', '--version'], { cwd: this.repoPath, stdio: 'ignore' });
+          vitestInstalled = true;
+        } catch (e) {
+          // vitest not found
+          spinner.warn('Vitest not found or not runnable. Attempting to install...');
+          await execa('npm', ['install', '-D', 'vitest'], { cwd: this.repoPath });
+          spinner.succeed('Vitest installed successfully.');
+          vitestInstalled = true; // Assuming install was successful
+        }
+
+        if (vitestInstalled) {
+          spinner.text = 'Running tests to verify migration...';
+          await execa('npm', ['test'], { stdio: 'inherit', cwd: this.repoPath });
+          spinner.succeed('Tests finished.');
+          // console.log(chalk.green('✅ All tests passing!')); // This might be too optimistic, let user see output
+        } else {
+          spinner.fail('Could not ensure Vitest is installed. Skipping tests.');
+        }
       } catch (testError) {
+        spinner.fail('Test execution failed.');
         // console.warn(chalk.yellow('⚠️  Some tests failed. You may need to fix them manually.'));
       }
     } catch (error) {

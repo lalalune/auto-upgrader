@@ -49,7 +49,7 @@ claude login
 
 ## Usage
 
-### Basic usage:
+### Single Repository Upgrade:
 ```bash
 # Upgrade a GitHub repository
 eliza-upgrade https://github.com/username/eliza-plugin-example
@@ -58,9 +58,22 @@ eliza-upgrade https://github.com/username/eliza-plugin-example
 eliza-upgrade ./my-eliza-plugin
 ```
 
+### Batch Upgrade from Registry:
+```bash
+# Using a remote registry URL
+eliza-upgrade --registry https://raw.githubusercontent.com/elizaOS/registry/main/index.json
+
+# Using a local registry file
+eliza-upgrade --registry ./path/to/your/local/index.json
+```
+
 ### With API key via command line:
 ```bash
+# For single repository
 eliza-upgrade https://github.com/username/eliza-plugin-example --api-key sk-ant-...
+
+# For batch mode (API key from env var is preferred for batch)
+eliza-upgrade --registry ./path/to/registry.json --api-key sk-ant-...
 ```
 
 ## How It Works
@@ -80,6 +93,7 @@ eliza-upgrade https://github.com/username/eliza-plugin-example --api-key sk-ant-
    - Generates detailed, file-specific migration instructions
    - Identifies exact imports, types, and functions to change
    - Creates a complete test plan
+   - **Note**: If upgrading from a registry, the tool first checks if a `1.x` or `1.x-claude` branch already exists on the remote and skips if found.
 
 4. **Migration Instructions Creation**
    - Combines base migration rules with specific strategy
@@ -117,16 +131,17 @@ The tool generates a specific migration strategy for each plugin that includes:
 After running the tool, your plugin will have:
 
 ```
-my-eliza-plugin/
-├── src/
-│   ├── index.ts        # Updated with 1.x architecture
-│   ├── services/       # Migrated services
-│   └── __tests__/      # New unit test files
-├── tests/              # Runtime integration tests
-├── package.json        # Updated scripts and dependencies
-├── vitest.config.ts    # Test configuration
-├── CLAUDE.md # Specific migration instructions
-└── README.md           # Updated documentation
+cloned_repos/    # Directory for cloned repositories in batch mode
+  my-eliza-plugin/
+    ├── src/
+    │   ├── index.ts        # Updated with 1.x architecture
+    │   ├── services/       # Migrated services
+    │   └── __tests__/      # New unit test files
+    ├── tests/              # Runtime integration tests
+    ├── package.json        # Updated scripts and dependencies
+    ├── vitest.config.ts    # Test configuration
+    ├── CLAUDE.md # Specific migration instructions
+    └── README.md           # Updated documentation
 ```
 
 ## Package.json Scripts
