@@ -5,6 +5,7 @@ This file provides instructions for Claude Code to migrate Eliza plugins from 0.
 IMPORTANT NOTES:
 
 Complete code examples of old and new plugins are available in the /textfiles directory, under <pluginname>-new and <pluginname>-old
+We are using prettier and eslint now, not biome. Remove biome and replace with prettier and eslint
 
 ## Migration Tool Overview
 
@@ -47,6 +48,7 @@ Generate a comprehensive migration plan that includes:
 - Provider updates for dynamic loading
 - Action system changes for multi-action support
 - Template migration from JSON to XML
+- Remove biome and replace with prettier and eslint
 
 ### 3. Code Migration
 Apply changes systematically:
