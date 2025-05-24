@@ -25,6 +25,7 @@ const encoder = encoding_for_model('gpt-4');
 // Configuration
 const MAX_TOKENS = 20000;
 const BRANCH_NAME = '1.x-claude';
+const CONCURRENCY_LIMIT = 10;
 
 class PluginUpgrader {
   constructor() {
@@ -50,108 +51,112 @@ class PluginUpgrader {
   }
 
   async run(input) {
-    const spinner = ora();
+    const spinner = ora(`Processing ${input}`);
     
     try {
-      console.log(chalk.blue('🚀 Eliza Plugin Auto-Upgrader'));
-      console.log(chalk.gray('─'.repeat(50)));
-
+      spinner.start();
       // Initialize Anthropic (required)
-      await this.initializeAnthropic();
+      // Ensure it's initialized per instance if run was called multiple times by an external loop
+      if (!this.anthropic) await this.initializeAnthropic();
 
       // Step 1: Handle input (GitHub URL or local folder)
-      spinner.start('Analyzing input...');
+      spinner.text = `Analyzing input for ${input}...`;
       await this.handleInput(input);
-      spinner.succeed('Input validated');
+      spinner.succeed(`Input validated for ${input}`);
 
       // Check if CLAUDE.md already exists
       const claudeMdPath = path.join(this.repoPath, 'CLAUDE.md');
       let skipGeneration = false;
       
       if (await fs.pathExists(claudeMdPath)) {
-        console.log(chalk.yellow('\n⚠️  CLAUDE.md already exists in the repository.'));
-        console.log(chalk.gray('Skipping migration strategy generation...'));
+        spinner.info(`${chalk.yellow('[SKIP]')} CLAUDE.md already exists in ${this.repoPath}. Skipping generation.`);
         skipGeneration = true;
       }
 
-      let specificStrategy = null;
-
       if (!skipGeneration) {
         // Step 2: Analyze repository
-        spinner.start('Analyzing repository structure...');
+        spinner.text = `Analyzing repository structure for ${this.repoPath}...`;
         const context = await this.analyzeRepository();
-        spinner.succeed('Repository analyzed');
+        spinner.succeed(`Repository analyzed for ${this.repoPath}`);
 
         // Step 3: Generate specific migration strategy
-        spinner.start('Generating specific migration strategy for this plugin...');
-        specificStrategy = await this.generateMigrationStrategy(context);
-        spinner.succeed('Migration strategy generated');
+        spinner.text = `Generating specific migration strategy for ${this.repoPath}...`;
+        const specificStrategy = await this.generateMigrationStrategy(context);
+        spinner.succeed(`Migration strategy generated for ${this.repoPath}`);
 
         // Step 4: Create CLAUDE.md with specific instructions
-        spinner.start('Creating migration instructions file...');
+        spinner.text = `Creating migration instructions file for ${this.repoPath}...`;
         await this.createMigrationInstructions(specificStrategy);
-        spinner.succeed('Migration instructions created');
+        spinner.succeed(`Migration instructions created for ${this.repoPath}`);
       }
 
       // Step 5: Create new branch
-      spinner.start(`Creating branch ${BRANCH_NAME}...`);
+      spinner.text = `Creating branch ${BRANCH_NAME} for ${this.repoPath}...`;
       await this.createBranch();
-      spinner.succeed(`Branch ${BRANCH_NAME} created`);
+      spinner.succeed(`Branch ${BRANCH_NAME} created for ${this.repoPath}`);
 
       // Step 6: Run Claude Code in CLI mode
-      console.log(chalk.yellow('\n🤖 Running Claude Code to apply migrations...'));
+      spinner.text = `${chalk.yellow('[ACTION]')} Running Claude Code to apply migrations for ${this.repoPath}...`;
       await this.runClaudeCode();
+      spinner.succeed(`Claude Code finished for ${this.repoPath}`);
+      
+      // Step 7: Push the new branch
+      spinner.text = `Pushing branch ${BRANCH_NAME} to origin for ${this.repoPath}...`;
+      await this.git.push('origin', BRANCH_NAME, {'--set-upstream': null});
+      spinner.succeed(`Branch ${BRANCH_NAME} pushed for ${this.repoPath}`);
 
-      console.log(chalk.green('\n✅ Migration complete!'));
-      console.log(chalk.gray(`Branch ${BRANCH_NAME} has been created with all changes.`));
+      console.log(chalk.green(`\n✅ Migration complete for ${input}!`));
       
     } catch (error) {
-      spinner.fail('Migration failed');
-      console.error(chalk.red('\n❌ Error:'), error.message);
+      spinner.fail(`Migration failed for ${input}`);
+      console.error(chalk.red(`\n❌ Error processing ${input}:`), error.message);
       if (error.stack) {
-        console.error(chalk.gray(error.stack));
+        // console.error(chalk.gray(error.stack)); // Potentially too verbose for batch
       }
-      process.exit(1);
+      // Do not exit process in batch mode, throw error to be caught by batch processor
+      throw error;
     }
   }
 
   async handleInput(input) {
     // Check if input is a GitHub URL
-    if (input.includes('github.com')) {
+    if (input.startsWith('https://github.com/')) {
       this.isGitHub = true;
       this.originalPath = input;
       
-      // Extract repo name from URL - handle various formats
-      const match = input.match(/github\.com[:/]([^/]+)\/([^/.]+?)(\.git)?$/);
-      if (!match) {
-        throw new Error('Invalid GitHub URL format');
-      }
+      const repoName = input.split('/').slice(-2).join('/').replace('.git', '');
+      this.repoPath = path.join(process.cwd(), 'cloned_repos', repoName.split('/')[1] || repoName);
+      await fs.ensureDir(path.dirname(this.repoPath));
       
-      const repoName = match[2];
-      this.repoPath = path.join(process.cwd(), repoName);
-      
-      // Check if folder already exists
       if (await fs.pathExists(this.repoPath)) {
-        console.log(chalk.yellow(`\n📁 Using existing folder: ${this.repoPath}`));
+        // console.log(chalk.yellow(`\n📁 Using existing folder: ${this.repoPath}`));
+        this.git = simpleGit(this.repoPath);
+        try {
+            await this.git.fetch(); // Fetch latest changes
+        } catch (fetchError) {
+            // console.warn(chalk.yellow(`Could not fetch for ${this.repoPath}, possibly a new clone. Error: ${fetchError.message}`));
+            // If fetch fails, could be a corrupted local repo or new clone. Try to delete and re-clone.
+            // console.log(chalk.yellow(`Attempting to delete and re-clone ${this.repoPath}...`));
+            await fs.remove(this.repoPath);
+            await simpleGit().clone(input, this.repoPath);
+            this.git = simpleGit(this.repoPath);
+        }
       } else {
-        console.log(chalk.yellow(`\n📥 Cloning repository...`));
-        await this.git.clone(input, this.repoPath);
+        // console.log(chalk.yellow(`\n📥 Cloning repository ${input} into ${this.repoPath}...`));
+        await simpleGit().clone(input, this.repoPath);
+        this.git = simpleGit(this.repoPath);
       }
       
-      // Change to repo directory
-      this.git = simpleGit(this.repoPath);
-      
-      // Check for 0.x branch, fallback to main
       const branches = await this.git.branch();
-      if (branches.all.includes('origin/0.x') || branches.all.includes('0.x')) {
-        await this.git.checkout('0.x');
-        console.log(chalk.gray('Checked out 0.x branch'));
-      } else if (branches.all.includes('origin/main') || branches.all.includes('main')) {
-        await this.git.checkout('main');
-        console.log(chalk.gray('No 0.x branch found, using main'));
+      if (branches.all.includes('remotes/origin/0.x') || branches.all.includes('0.x')) {
+        if (branches.current !== '0.x') await this.git.checkout('0.x');
+        // console.log(chalk.gray(`Checked out 0.x branch for ${this.repoPath}`));
+      } else if (branches.all.includes('remotes/origin/main') || branches.all.includes('main')) {
+        if (branches.current !== 'main') await this.git.checkout('main');
+        // console.log(chalk.gray(`No 0.x branch found, using main for ${this.repoPath}`));
       }
     } else {
-      // Local folder
+      // Local folder (less relevant for batch GitHub processing but kept for single mode)
       this.repoPath = path.resolve(input);
       if (!await fs.pathExists(this.repoPath)) {
         throw new Error(`Folder not found: ${this.repoPath}`);
@@ -196,7 +201,7 @@ class PluginUpgrader {
     // Find all .ts and .js files
     const sourceFiles = await globby(['**/*.ts', '**/*.js'], {
       cwd: this.repoPath,
-      ignore: ['node_modules/**', 'dist/**', 'build/**', '*.test.*', '*.spec.*', 'coverage/**']
+      ignore: ['node_modules/**', 'dist/**', 'build/**', '*.test.*', '*.spec.*', 'coverage/**', 'cloned_repos/**']
     });
 
     // Read source files and calculate tokens
@@ -207,7 +212,6 @@ class PluginUpgrader {
     
     totalTokens = readmeTokens + packageTokens + indexTokens;
 
-    // Sort files by importance (based on path depth and name)
     const sortedFiles = sourceFiles.sort((a, b) => {
       const depthA = a.split('/').length;
       const depthB = b.split('/').length;
@@ -215,52 +219,25 @@ class PluginUpgrader {
       return a.localeCompare(b);
     });
 
-    // Add files until we reach token limit
     for (const file of sortedFiles) {
-      if (file === files.index?.path) continue; // Skip index file (already included)
-      
+      if (file === files.index?.path) continue;
       const filePath = path.join(this.repoPath, file);
       const content = await fs.readFile(filePath, 'utf-8');
       const fileTokens = encoder.encode(content).length;
-      
-      if (totalTokens + fileTokens > MAX_TOKENS) {
-        console.log(chalk.gray(`\nReached token limit. Included ${files.sourceFiles.length} source files.`));
-        break;
-      }
-      
-      files.sourceFiles.push({
-        path: file,
-        content: content
-      });
+      if (totalTokens + fileTokens > MAX_TOKENS) break;
+      files.sourceFiles.push({ path: file, content: content });
       totalTokens += fileTokens;
     }
-
-    console.log(chalk.gray(`\nTotal tokens: ${totalTokens}/${MAX_TOKENS}`));
-    
-    // Create context string
+    // console.log(chalk.gray(`\nTotal tokens for ${this.repoPath}: ${totalTokens}/${MAX_TOKENS}`));
     let context = '';
-    
-    if (files.readme) {
-      context += '# README.md\n\n' + files.readme + '\n\n';
-    }
-    
-    if (files.packageJson) {
-      context += '# package.json\n\n```json\n' + files.packageJson + '\n```\n\n';
-    }
-    
-    if (files.index) {
-      context += `# ${files.index.path}\n\n\`\`\`typescript\n${files.index.content}\n\`\`\`\n\n`;
-    }
-    
-    for (const file of files.sourceFiles) {
-      context += `# ${file.path}\n\n\`\`\`typescript\n${file.content}\n\`\`\`\n\n`;
-    }
-    
+    if (files.readme) context += '# README.md\n\n' + files.readme + '\n\n';
+    if (files.packageJson) context += '# package.json\n\n```json\n' + files.packageJson + '\n```\n\n';
+    if (files.index) context += `# ${files.index.path}\n\n\`\`\`typescript\n${files.index.content}\n\`\`\`\n\n`;
+    for (const file of files.sourceFiles) context += `# ${file.path}\n\n\`\`\`typescript\n${file.content}\n\`\`\`\n\n`;
     return context;
   }
 
   async generateMigrationStrategy(context) {
-    // Create prompt to generate specific migration strategy
     let prompt = `You are migrating an Eliza plugin from version 0.x to 1.x. Analyze the provided codebase and generate a SPECIFIC, DETAILED migration strategy.
 
 ## Key Migration Requirements:
@@ -315,26 +292,11 @@ Format your response as a clear, actionable migration plan.`;
       
       return message.content[0].text;
     } catch (error) {
-      if (error.message.includes('model_not_found')) {
-        console.error(chalk.yellow('\n⚠️  Claude 4 Opus model not available. Falling back to Claude 3 Sonnet...'));
-        // Fallback to Claude 3 Sonnet
-        const message = await this.anthropic.messages.create({
-          model: 'claude-3-sonnet-20240229',
-          max_tokens: 4000,
-          temperature: 0,
-          messages: [{
-            role: 'user',
-            content: prompt
-          }]
-        });
-        return message.content[0].text;
-      }
       throw error;
     }
   }
 
   async createMigrationInstructions(specificStrategy) {
-    // Read base CLAUDE.md
     const baseClaude = await fs.readFile(path.join(__dirname, 'CLAUDE.md'), 'utf-8');
     
     // Create combined instructions
@@ -363,88 +325,186 @@ The goal is a fully migrated, tested, and working 1.x plugin.
     // Write to repo
     const outputPath = path.join(this.repoPath, 'CLAUDE.md');
     await fs.writeFile(outputPath, combinedInstructions);
-    console.log(chalk.gray(`\nMigration instructions written to: ${outputPath}`));
+    // console.log(chalk.gray(`\nMigration instructions written to: ${outputPath}`));
   }
 
   async createBranch() {
-    // Check if branch already exists
     const branches = await this.git.branch();
-    if (branches.all.includes(BRANCH_NAME)) {
-      console.log(chalk.yellow(`\n⚠️  Branch ${BRANCH_NAME} already exists. Deleting and recreating...`));
-      await this.git.deleteLocalBranch(BRANCH_NAME, true);
+    const currentBranch = branches.current;
+    if (branches.all.includes(BRANCH_NAME) || branches.all.includes(`remotes/origin/${BRANCH_NAME}`)) {
+        if(currentBranch !== BRANCH_NAME) {
+            // console.log(chalk.yellow(`Switching to existing branch ${BRANCH_NAME} for ${this.repoPath}`));
+            try {
+                await this.git.checkout(BRANCH_NAME);
+            } catch (e) {
+                 // console.log(chalk.yellow(`Local branch ${BRANCH_NAME} not found or has issues, trying to fetch from origin and recreate for ${this.repoPath}`));
+                await this.git.fetch('origin', BRANCH_NAME).catch(() => {}); // fetch if exists
+                await this.git.deleteLocalBranch(BRANCH_NAME, true).catch(() => {}); // delete local if exists
+                await this.git.checkoutBranch(BRANCH_NAME, `origin/${BRANCH_NAME}`).catch(async () => {
+                    // If origin/BRANCH_NAME doesn't exist, create it fresh from current branch
+                    // console.log(chalk.yellow(`Branch ${BRANCH_NAME} not on origin, creating new from ${currentBranch} for ${this.repoPath}`));
+                    await this.git.checkout(currentBranch); // ensure back on a valid branch
+                    await this.git.checkoutLocalBranch(BRANCH_NAME);
+                });
+            }
+        }
+    } else {
+        // console.log(chalk.yellow(`Creating new branch ${BRANCH_NAME} from ${currentBranch} for ${this.repoPath}`));
+        await this.git.checkoutLocalBranch(BRANCH_NAME);
     }
-    
-    // Create new branch
-    await this.git.checkoutLocalBranch(BRANCH_NAME);
   }
 
   async runClaudeCode() {
-    // Change to repo directory for Claude Code execution
     process.chdir(this.repoPath);
-    
-    // Create the command to run
     const migrationPrompt = `Please read the CLAUDE.md file in this repository and execute all the migration steps described there. Apply all changes systematically, create all tests, and ensure everything works.`;
-    
-    console.log(chalk.gray('\nRunning Claude Code in CLI mode...'));
-    console.log(chalk.gray('This will apply all migrations automatically.\n'));
-
+    // console.log(chalk.gray('\nRunning Claude Code in CLI mode...'));
     try {
-      // Run Claude Code in print mode with max turns for thorough completion
       await execa('claude', [
         '--print',
         '--max-turns', '30',
+        '--verbose',
         '--model', 'opus',
         '--dangerously-skip-permissions',
         migrationPrompt
-      ], {
-        stdio: 'inherit',
-        cwd: this.repoPath
-      });
-      
-      // After Claude completes, run tests to verify
-      console.log(chalk.yellow('\n📋 Running tests to verify migration...'));
-      
+      ], { stdio: 'inherit', cwd: this.repoPath });
+      // console.log(chalk.yellow('\n📋 Running tests to verify migration...'));
       try {
-        await execa('npm', ['test'], {
-          stdio: 'inherit',
-          cwd: this.repoPath
-        });
-        console.log(chalk.green('✅ All tests passing!'));
+        await execa('npm', ['test'], { stdio: 'inherit', cwd: this.repoPath });
+        // console.log(chalk.green('✅ All tests passing!'));
       } catch (testError) {
-        console.log(chalk.yellow('⚠️  Some tests failed. You may need to fix them manually.'));
+        // console.warn(chalk.yellow('⚠️  Some tests failed. You may need to fix them manually.'));
       }
-      
     } catch (error) {
-      // If claude command not found, provide instructions
       if (error.code === 'ENOENT') {
-        console.log(chalk.yellow('\n⚠️  Claude Code not found!'));
-        console.log(chalk.gray('Please install Claude Code first:'));
-        console.log(chalk.cyan('  npm install -g @anthropic-ai/claude-code'));
-        console.log(chalk.gray('\nThen run the following command in the repository:'));
-        console.log(chalk.cyan(`  cd ${this.repoPath}`));
-        console.log(chalk.cyan(`  claude --print --max-turns 30 --dangerously-skip-permissions "${migrationPrompt}"`));
+        console.error(chalk.red('\n⚠️  Claude Code not found! Install with: npm install -g @anthropic-ai/claude-code'));
+        console.error(chalk.gray(`Manual command for ${this.repoPath}: cd ${this.repoPath} && claude --print --max-turns 30 --model opus --dangerously-skip-permissions "${migrationPrompt}"`));
       } else {
-        throw error;
+        throw error; // Rethrow for batch processor to catch
       }
     }
   }
 }
 
-// CLI setup
+async function checkRemoteBranches(repoUrl) {
+  try {
+    const remoteLs = await simpleGit().listRemote(['--heads', repoUrl]);
+    return remoteLs.includes(`refs/heads/${BRANCH_NAME}`) || remoteLs.includes('refs/heads/1.x');
+  } catch (e) {
+    // console.warn(chalk.yellow(`Could not list remote branches for ${repoUrl}: ${e.message}. Assuming no upgrade branches.`));
+    return false; // If can't list, assume not present and try to process
+  }
+}
+
+async function processSingleRepo(repoUrl, sharedAnthropicInstance) {
+  const upgrader = new PluginUpgrader();
+  upgrader.anthropic = sharedAnthropicInstance; // Share the initialized Anthropic instance
+  await upgrader.run(repoUrl);
+}
+
+async function runBatch(registryUrlOrPath) {
+  let registry;
+  const mainSpinner = ora('Starting batch processing...').start();
+  
+  try {
+    if (registryUrlOrPath.startsWith('http')) {
+      mainSpinner.text = `Fetching registry from ${registryUrlOrPath}...`;
+      const response = await fetch(registryUrlOrPath);
+      if (!response.ok) throw new Error(`Failed to fetch registry: ${response.statusText}`);
+      registry = await response.json();
+    } else {
+      mainSpinner.text = `Reading registry from local path ${registryUrlOrPath}...`;
+      registry = JSON.parse(await fs.readFile(registryUrlOrPath, 'utf-8'));
+    }
+    mainSpinner.succeed('Registry loaded.');
+  } catch (e) {
+    mainSpinner.fail(`Failed to load registry: ${e.message}`);
+    process.exit(1);
+  }
+
+  const repoTasks = [];
+  const sharedAnthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (!process.env.ANTHROPIC_API_KEY) {
+    mainSpinner.fail('ANTHROPIC_API_KEY is not set. Cannot proceed with batch processing.');
+    process.exit(1);
+  }
+
+  for (const [key, value] of Object.entries(registry)) {
+    if (typeof value === 'string' && value.startsWith('github:')) {
+      const repoPath = value.substring('github:'.length);
+      const repoUrl = `https://github.com/${repoPath}.git`;
+      repoTasks.push({ name: key, url: repoUrl });
+    }
+  }
+  
+  mainSpinner.info(`Found ${repoTasks.length} plugins to process.`);
+  const tasksToRun = [];
+  const preCheckSpinner = ora('Checking existing branches for plugins...').start();
+  let count = 0;
+  for (const task of repoTasks) {
+    count++;
+    preCheckSpinner.text = `Checking ${count}/${repoTasks.length}: ${task.name}`;
+    if (await checkRemoteBranches(task.url)) {
+      preCheckSpinner.info(`${chalk.cyan('[SKIP]')} ${task.name} already has 1.x or ${BRANCH_NAME} branch.`);
+    } else {
+      tasksToRun.push(() => processSingleRepo(task.url, sharedAnthropic)
+        .catch(e => console.error(chalk.magenta(`\n‼️ Failed to process ${task.name}: ${e.message}`)))
+      );
+    }
+  }
+  preCheckSpinner.succeed(`Branch checks complete. ${tasksToRun.length} plugins need processing.`);
+
+  if (tasksToRun.length === 0) {
+    mainSpinner.succeed('No plugins require migration.');
+    return;
+  }
+
+  mainSpinner.info(`Starting migration for ${tasksToRun.length} plugins with concurrency ${CONCURRENCY_LIMIT}...`);
+  
+  const executing = [];
+  let completedCount = 0;
+  let failedCount = 0;
+
+  for (const taskFn of tasksToRun) {
+    const p = taskFn()
+      .then(() => { completedCount++; })
+      .catch(() => { failedCount++; })
+      .finally(() => {
+        mainSpinner.text = `Processing plugins... (${completedCount} completed, ${failedCount} failed / ${tasksToRun.length} total)`
+        executing.splice(executing.indexOf(p), 1)
+      });
+    
+    executing.push(p);
+
+    if (executing.length >= CONCURRENCY_LIMIT) {
+      await Promise.race(executing).catch(() => {}); // Wait for one to finish, catch to prevent unhandled rejection if a task fails
+    }
+  }
+  
+  await Promise.allSettled(executing); // Wait for all remaining tasks
+  mainSpinner.succeed(`Batch processing finished. ${completedCount} succeeded, ${failedCount} failed.`);
+}
+
 program
   .name('eliza-upgrade')
   .description('Automatically migrate Eliza plugins from 0.x to 1.x using Claude Code')
   .version('1.0.0')
-  .argument('<input>', 'GitHub repository URL or local folder path')
+  .argument('[input]', 'GitHub repository URL or local folder path')
+  .option('--registry <url_or_path>', 'URL or local path to a JSON registry of plugins')
   .option('--api-key <key>', 'Anthropic API key (or use ANTHROPIC_API_KEY env var)')
   .action(async (input, options) => {
-    // Set API key if provided via CLI
     if (options.apiKey) {
       process.env.ANTHROPIC_API_KEY = options.apiKey;
     }
-    
-    const upgrader = new PluginUpgrader();
-    await upgrader.run(input);
+
+    if (options.registry) {
+      await runBatch(options.registry);
+    } else if (input) {
+      const upgrader = new PluginUpgrader();
+      await upgrader.run(input);
+    } else {
+      console.log(chalk.red('Please provide an input repository or a registry URL.'));
+      program.help();
+    }
   });
 
 program.parse(); 
