@@ -1,0 +1,574 @@
+Project Path: src
+
+Source Tree:
+
+```
+src
+├── types.ts
+├── actions
+│   ├── transcribeAudioAction.ts
+│   ├── analyzeSentimentAction.ts
+│   ├── generateEmbeddingAction.ts
+│   ├── moderateContentAction.ts
+│   ├── action.ts
+│   ├── editTextAction.ts
+│   └── generateTextAction.ts
+└── index.ts
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/types.ts`:
+
+```ts
+// Types for generating text
+export interface OpenAITextRequest {
+    model: string;
+    prompt: string;
+    max_tokens: number;
+    temperature: number;
+}
+
+export interface OpenAITextResponse {
+    id: string;
+    object: string;
+    created: number;
+    model: string;
+    choices: Array<{
+        text: string;
+        index: number;
+        logprobs: null | {
+            tokens: string[];
+            token_logprobs: number[];
+            top_logprobs: Record<string, number>[];
+            text_offset: number[];
+        };
+        finish_reason: string;
+    }>;
+    usage: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+    };
+}
+
+// Types for generating embeddings
+export interface OpenAIEmbeddingRequest {
+    model: string;
+    input: string | string[];
+}
+
+export interface OpenAIEmbeddingResponse {
+    object: string;
+    data: Array<{
+        embedding: number[];
+        index: number;
+    }>;
+    model: string;
+    usage: {
+        prompt_tokens: number;
+        total_tokens: number;
+    };
+}
+
+// Types for analyzing sentiment
+export interface OpenAISentimentAnalysisRequest {
+    model: string;
+    prompt: string;
+    max_tokens: number;
+    temperature: number;
+}
+
+export interface OpenAISentimentAnalysisResponse {
+    id: string;
+    object: string;
+    created: number;
+    model: string;
+    choices: Array<{
+        text: string;
+        index: number;
+        logprobs: null | {
+            tokens: string[];
+            token_logprobs: number[];
+            top_logprobs: Record<string, number>[];
+            text_offset: number[];
+        };
+        finish_reason: string;
+    }>;
+}
+
+// Types for audio transcription
+export interface OpenAITranscriptionRequest {
+    file: File | Blob;
+    model: string;
+    prompt?: string;
+    response_format?: "json" | "text" | "srt" | "verbose_json" | "vtt";
+    temperature?: number;
+    language?: string;
+}
+
+export interface OpenAITranscriptionResponse {
+    text: string;
+}
+
+// Types for content moderation
+export interface OpenAIModerationRequest {
+    input: string | string[];
+    model?: string;
+}
+
+export interface OpenAIModerationResponse {
+    id: string;
+    model: string;
+    results: Array<{
+        flagged: boolean;
+        categories: Record<string, boolean>;
+        category_scores: Record<string, number>;
+    }>;
+}
+
+// Types for editing text
+export interface OpenAIEditRequest {
+    model: string;
+    input: string;
+    instruction: string;
+    temperature?: number;
+    top_p?: number;
+}
+
+export interface OpenAIEditResponse {
+    object: string;
+    created: number;
+    choices: Array<{
+        text: string;
+        index: number;
+    }>;
+    usage: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+    };
+}
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/transcribeAudioAction.ts`:
+
+```ts
+import type { Action } from "@elizaos/core";
+import { 
+    validateApiKey, 
+    callOpenAiApi, 
+    buildRequestData,
+    type OpenAIRequestData
+} from "./action";
+
+export const transcribeAudioAction: Action = {
+    name: "transcribeAudio",
+    description: "Transcribe audio using OpenAI Whisper",
+    similes: [],
+    async handler(_runtime, message, _state) {
+        const file = message.content.file;
+        if (!file) {
+            throw new Error("No audio file provided");
+        }
+
+        const apiKey = validateApiKey();
+        const formData = new FormData();
+        formData.append("file", file as Blob);
+        formData.append("model", "whisper-1");
+
+        interface TranscriptionResponse {
+            text: string;
+        }
+
+        const response = await callOpenAiApi(
+            "https://api.openai.com/v1/audio/transcriptions",
+            formData as unknown as OpenAIRequestData,
+            apiKey,
+        ) as TranscriptionResponse;
+        return response.text;
+    },
+    validate: async (runtime, _message) => {
+        return !!runtime.getSetting("OPENAI_API_KEY");
+    },
+    examples: [],
+};
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/analyzeSentimentAction.ts`:
+
+```ts
+import type { Action } from "@elizaos/core";
+import {
+    validatePrompt,
+    validateApiKey,
+    callOpenAiApi,
+    buildRequestData,
+} from "./action";
+
+export const analyzeSentimentAction: Action = {
+    name: "analyzeSentiment",
+    description: "Analyze sentiment using OpenAI",
+    similes: [], // Added missing required property
+    async handler(_runtime, message, _state) {
+        const prompt = `Analyze the sentiment of the following text: "${message.content.text?.trim() || ""}"`;
+        validatePrompt(prompt);
+
+        const apiKey = validateApiKey();
+        const requestData = buildRequestData(prompt);
+
+        const response = await callOpenAiApi<{ choices: Array<{ text: string }> }>(
+            "https://api.openai.com/v1/completions",
+            requestData,
+            apiKey,
+        );
+        return response.choices[0].text.trim();
+    },
+    validate: async (runtime, _message) => {
+        return !!runtime.getSetting("OPENAI_API_KEY");
+    },
+    examples: [],
+};
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/generateEmbeddingAction.ts`:
+
+```ts
+import type { Action } from "@elizaos/core";
+import {
+    validatePrompt,
+    validateApiKey,
+    callOpenAiApi,
+    buildRequestData,
+} from "./action";
+
+export const generateEmbeddingAction: Action = {
+    name: "generateEmbedding",
+    description: "Generate embeddings using OpenAI",
+    similes: [],
+    async handler(_runtime, message, _state) {
+        const input = (message.content.text as string)?.trim() || "";
+        validatePrompt(input);
+
+        const apiKey = validateApiKey();
+        const requestData = buildRequestData(
+            "text-embedding-ada-002",
+            input
+        );
+
+        const response = await callOpenAiApi(
+            "https://api.openai.com/v1/embeddings",
+            requestData,
+            apiKey,
+        ) as { data: Array<{ embedding: number[] }> };
+        return response.data.map((item: { embedding: number[] }) => item.embedding);
+    },
+    validate: async (runtime, _message) => {
+        return !!runtime.getSetting("OPENAI_API_KEY");
+    },
+    examples: [],
+};
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/moderateContentAction.ts`:
+
+```ts
+import type { Action } from "@elizaos/core";
+import { validatePrompt, validateApiKey, callOpenAiApi, buildRequestData } from "./action";
+
+export const moderateContentAction: Action = {
+    name: "moderateContent",
+    description: "Moderate content using OpenAI",
+    similes: [],
+    async handler(_runtime, message, _state) {
+        const input = (message.content.text as string)?.trim() || "";
+        validatePrompt(input);
+
+        const apiKey = validateApiKey();
+        const requestData = buildRequestData(
+            "text-moderation-latest",
+            input
+        );
+
+        const response = await callOpenAiApi(
+            "https://api.openai.com/v1/moderations",
+            requestData,
+            apiKey,
+        ) as { results: Array<{ flagged: boolean; categories: Record<string, boolean>; category_scores: Record<string, number> }> };
+        return response.results;
+    },
+    validate: async (runtime, _message) => {
+        return !!runtime.getSetting("OPENAI_API_KEY");
+    },
+    examples: [],
+};
+    
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/action.ts`:
+
+```ts
+import axios, { type AxiosRequestConfig } from "axios";
+
+export const DEFAULT_MODEL = process.env.OPENAI_DEFAULT_MODEL || "text-davinci-003";
+export const DEFAULT_MAX_TOKENS = Number.parseInt(process.env.OPENAI_MAX_TOKENS || "200", 10);
+export const DEFAULT_TEMPERATURE = Number.parseFloat(process.env.OPENAI_TEMPERATURE || "0.7");
+export const DEFAULT_TIMEOUT = 30000; // 30 seconds
+
+/**
+ * Validate a prompt for length and content.
+ * @param prompt - The prompt to validate.
+ * @throws Will throw an error if the prompt is invalid.
+ */
+export function validatePrompt(prompt: string): void {
+    if (!prompt.trim()) {
+        throw new Error("Prompt cannot be empty");
+    }
+    if (prompt.length > 4000) {
+        throw new Error("Prompt exceeds maximum length of 4000 characters");
+    }
+}
+
+/**
+ * Validate the presence of the OpenAI API key.
+ * @throws Will throw an error if the API key is not set.
+ * @returns The API key.
+ */
+export function validateApiKey(): string {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+        throw new Error("OpenAI API key is not set");
+    }
+    return apiKey;
+}
+
+/**
+ * Send a request to the OpenAI API.
+ * @param url - The OpenAI API endpoint.
+ * @param data - The request payload.
+ * @returns The response data.
+ * @throws Will throw an error for request failures or rate limits.
+ */
+
+export interface OpenAIRequestData {
+    model: string;
+    prompt: string;
+    max_tokens: number;
+    temperature: number;
+    [key: string]: unknown;
+}
+
+export interface OpenAIEditRequestData {
+    model: string;
+    input: string;
+    instruction: string;
+    max_tokens: number;
+    temperature: number;
+    [key: string]: unknown;
+}
+
+export async function callOpenAiApi<T>(
+    url: string,
+    data: OpenAIRequestData | OpenAIEditRequestData,
+    apiKey: string,
+): Promise<T> {
+    try {
+        const config: AxiosRequestConfig = {
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+            },
+            timeout: DEFAULT_TIMEOUT,
+        };
+        const response = await axios.post<T>(url, data, config);
+        return response.data;
+    } catch (error) {
+        console.error("Error communicating with OpenAI API:", error instanceof Error ? error.message : String(error));
+        if (axios.isAxiosError(error)) {
+            if (error.response?.status === 429) {
+                throw new Error("Rate limit exceeded. Please try again later.");
+            }
+        }
+        throw new Error("Failed to communicate with OpenAI API");
+    }
+}
+
+/**
+ * Build a request object for OpenAI completions.
+ * @param prompt - The text prompt to process.
+ * @param model - The model to use.
+ * @param maxTokens - The maximum number of tokens to generate.
+ * @param temperature - The sampling temperature.
+ * @returns The request payload for OpenAI completions.
+ */
+
+export function buildRequestData(
+    prompt: string,
+    model: string = DEFAULT_MODEL,
+    maxTokens: number = DEFAULT_MAX_TOKENS,
+    temperature: number = DEFAULT_TEMPERATURE,
+): OpenAIRequestData {
+    return {
+        model,
+        prompt,
+        max_tokens: maxTokens,
+        temperature,
+    };
+}
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/editTextAction.ts`:
+
+```ts
+import type { Action } from "@elizaos/core";
+import {
+    validatePrompt,
+    validateApiKey,
+    callOpenAiApi,
+} from "./action";
+
+interface EditResponse {
+    choices: Array<{ text: string }>;
+}
+
+export const editTextAction: Action = {
+    name: "editText",
+    description: "Edit text using OpenAI",
+    similes: [],
+    async handler(_runtime, message, _state) {
+        const input = (message.content.input as string)?.trim() || "";
+        const instruction = (message.content.instruction as string)?.trim() || "";
+        validatePrompt(input);
+        validatePrompt(instruction);
+
+        const apiKey = validateApiKey();
+        const requestData = {
+            model: "text-davinci-edit-001",
+            input,
+            instruction,
+            max_tokens: 1000,
+            temperature: 0.7,
+        };
+
+        const response = await callOpenAiApi<EditResponse>(
+            "https://api.openai.com/v1/edits",
+            requestData,
+            apiKey,
+        );
+        return response.choices[0].text.trim();
+    },
+    validate: async (runtime, _message) => {
+        return !!runtime.getSetting("OPENAI_API_KEY");
+    },
+    examples: [],
+};
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/actions/generateTextAction.ts`:
+
+```ts
+import type { Action } from "@elizaos/core";
+import {
+    validatePrompt,
+    validateApiKey,
+    callOpenAiApi,
+    buildRequestData,
+} from "./action";
+
+export const generateTextAction: Action = {
+    name: "generateText",
+    description: "Generate text using OpenAI",
+    similes: [],
+    async handler(_runtime, message, _state) {
+        const prompt = (message.content.text as string)?.trim() || "";
+        validatePrompt(prompt);
+
+        const apiKey = validateApiKey();
+        const requestData = buildRequestData(
+            String(message.content.model),
+            prompt,
+            typeof message.content.maxTokens === 'number' ? message.content.maxTokens : undefined,
+            typeof message.content.temperature === 'number' ? message.content.temperature : undefined,
+        );
+
+        const response = await callOpenAiApi(
+            "https://api.openai.com/v1/completions",
+            requestData,
+            apiKey,
+        ) as { choices: Array<{ text: string }> };
+        return { text: response.choices[0].text.trim() };
+    },
+    validate: async (runtime, _message) => {
+        return !!runtime.getSetting("OPENAI_API_KEY");
+    },
+    examples: [],
+};
+
+```
+
+`/Users/shawwalters/auto-upgrader/plugin-openai/src/index.ts`:
+
+```ts
+import type { Plugin } from "@elizaos/core";
+import { generateTextAction } from "./actions/generateTextAction";
+import { generateEmbeddingAction } from "./actions/generateEmbeddingAction";
+import { analyzeSentimentAction } from "./actions/analyzeSentimentAction";
+import { transcribeAudioAction } from "./actions/transcribeAudioAction";
+import { moderateContentAction } from "./actions/moderateContentAction";
+import { editTextAction } from "./actions/editTextAction";
+
+// Simple terminal output
+console.log("\n===============================");
+console.log("      OpenAI Plugin Loaded      ");
+console.log("===============================");
+console.log("Name      : openai-plugin");
+console.log("Version   : 0.1.0");
+console.log("X Account : https://x.com/Data0x88850");
+console.log("GitHub    : https://github.com/0xrubusdata");
+console.log("Actions   :");
+console.log("  - generateTextAction");
+console.log("  - generateEmbeddingAction");
+console.log("  - analyzeSentimentAction");
+console.log("  - transcribeAudioAction");
+console.log("  - moderateContentAction");
+console.log("  - editTextAction");
+console.log("===============================\n");
+
+export const openaiPlugin: Plugin = {
+    name: "openai",
+    description: "OpenAI integration plugin for various AI capabilities",
+    actions: [
+        generateTextAction,
+        generateEmbeddingAction,
+        analyzeSentimentAction,
+        transcribeAudioAction,
+        moderateContentAction,
+        editTextAction,
+    ],
+    evaluators: [],
+    providers: [],
+    tests: [
+        {
+            name: "test-generateTextAction",
+            tests: [
+                {
+                    name: "test-generateTextAction-1",
+                    fn: async (runtime) => {
+                        const result = "Empty OpenAI Plugin test!!";
+                        console.log(result);
+                        Promise.resolve(true);
+                    },
+                },
+            ],
+        },
+    ],
+};
+
+export default openaiPlugin;
+
+```

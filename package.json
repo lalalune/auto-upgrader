@@ -1,0 +1,38 @@
+{
+  "name": "eliza-plugin-auto-upgrader",
+  "version": "1.0.0",
+  "description": "CLI tool to automatically migrate Eliza plugins from 0.x to 1.x using Claude Code",
+  "main": "cli.js",
+  "bin": {
+    "eliza-upgrade": "./cli.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node cli.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "eliza",
+    "plugin",
+    "migration",
+    "claude",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.3",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.5.0",
+    "execa": "^9.1.0",
+    "fs-extra": "^11.2.0",
+    "globby": "^14.0.2",
+    "ora": "^8.0.1",
+    "simple-git": "^3.25.0",
+    "tiktoken": "^1.0.15"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
